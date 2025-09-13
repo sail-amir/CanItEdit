@@ -318,7 +318,11 @@ async def process_example_and_instruction(
         Issues a request, but concurrency limited by batch_sema.
         """
         async with batch_sema:
-            return await model.generate(example, **model_kwargs)
+            try:
+                async with asyncio.timeout(30):
+                    return await model.generate(example, **model_kwargs)
+            except asyncio.TimeoutError:
+                return "<timeout encountered>"
 
     completion_tasks = [gen(example) for _ in range(args.completion_limit)]
     completions = await asyncio.gather(*completion_tasks)
