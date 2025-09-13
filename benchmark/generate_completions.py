@@ -64,28 +64,6 @@ MessagesFormatFunction = Callable[[str, str], List[Message]]
 PostProcessFunction = Callable[[str, str], str]
 
 
-def direct_edit_prompt(
-    old,
-    instr,
-    codeblock_before: Optional[str] = None,
-    codeblock_after: Optional[str] = None,
-):
-    """
-    The codeblock_before and codeblock_after arguments are used to specify
-    if there should be a codeblock surrounding the code before and after
-    the instruction. If None, then no codeblock is used. The string is the
-    extension of the codeblock, e.g. "py" or "md".
-    """
-    if codeblock_before is not None:
-        old = f"```{codeblock_before}\n{old}\n```"
-    if codeblock_after is not None:
-        new = f"```{codeblock_after}\n{new}\n```"
-    before = f"""## Code Before:\n{old}\n"""
-    instr = f"""## Instruction:\n{instr}\n"""
-    after = f"""## Code After:\n"""
-    return before + instr + after
-
-
 def chat_edit_prompt_zeroshot(old: str, instr: str) -> List[Message]:
     return [
         {
@@ -110,22 +88,6 @@ You are PythonEditGPT. You will be provided the original code snippet and an ins
     ]
 
 
-def python_markdown_codeblock_extract(_: str, new: str) -> str:
-    # print("prior to extracting codeblock:", new)
-    lines = new.split("\n")
-    buf = ""
-    in_codeblock = False
-    for ln in lines:
-        if ln.startswith("```"):
-            if in_codeblock:
-                break
-            else:
-                in_codeblock = True
-        elif in_codeblock:
-            buf += ln + "\n"
-    # print("after extracting codeblock:", buf)
-    return buf
-    
 
 # Copied from prl_ml
 def extract_code_from_markdown(markdown):
@@ -164,11 +126,6 @@ def extract_code_from_markdown(markdown):
             
     return code.strip()
 
-def maybe_extract_markdown_codeblock(generated_text: str) -> str:
-    code = extract_code_from_markdown(generated_text)
-    if code is not None:
-        return code
-    return generated_text
 
 
 class EditModel:
@@ -182,50 +139,64 @@ class EditModel:
         raise NotImplementedError
 
 
+
 class DirectEditModel(EditModel):
     """
     The direct kind of edit model, this class is supposed to be used either with EditCoder or
     with non-chat models, like foundation models.
     """
 
-    def __init__(
+    def __init__(self, model_name: str):
+        super().__init__()
+        self.model_name = model_name
+
+    def format_prompt(
         self,
-        model_name,
-        prompt_format: PromptFormatFunction = direct_edit_prompt,
-        post_process: PostProcessFunction = lambda old, new: new,
-        stop_tokens=[
-            # NOTE(arjun): These are the original stop tokens from the CanItEdit
-            # code, which you can verify here:
-            #
-            # https://github.com/nuprl/CanItEdit/blob/1a87cb488e7ff801cce80550e20822228e1c88fe/benchmark/generate_completions.py#L507
-            #
-            # However, notice that in the paper and the few-shot prompt, there
-            # may not be a ":" after the stop tokens. However, if you see
-            # the training code, this is how EditCoder was trained:
-            #
-            # https://github.com/nuprl/CanItEdit/blob/1a87cb488e7ff801cce80550e20822228e1c88fe/editpackft/format.py#L20
-            #
-            # I am not going to remove these. But, I am adding new stop tokens below.
+        old,
+        instr,
+        codeblock_before: Optional[str] = None,
+    ):
+        """
+        The codeblock_before and codeblock_after arguments are used to specify
+        if there should be a codeblock surrounding the code before and after
+        the instruction. If None, then no codeblock is used. The string is the
+        extension of the codeblock, e.g. "py" or "md".
+        """
+        if codeblock_before is not None:
+            old = f"```{codeblock_before}\n{old}\n```"
+        before = f"""## Code Before:\n{old}\n"""
+        instr = f"""## Instruction:\n{instr}\n"""
+        after = f"""## Code After:\n"""
+        return before + instr + after
+
+    def extract_from_response(self, response_text: str) -> str:
+        code = extract_code_from_markdown(response_text)
+        if code is not None:
+            return code
+        return response_text
+
+    def get_stop_tokens(self):
+        # NOTE(arjun): These are the original stop tokens from the CanItEdit
+        # code, which you can verify here:
+        #
+        # https://github.com/nuprl/CanItEdit/blob/1a87cb488e7ff801cce80550e20822228e1c88fe/benchmark/generate_completions.py#L507
+        #
+        # However, notice that in the paper and the few-shot prompt, there
+        # may not be a ":" after the stop tokens. However, if you see
+        # the training code, this is how EditCoder was trained:
+        #
+        # https://github.com/nuprl/CanItEdit/blob/1a87cb488e7ff801cce80550e20822228e1c88fe/editpackft/format.py#L20
+        return [
             "## Code After:",
             "## Instruction:",
             "## Code Before:",
             "## Test Case:",
-            "## Explanation:",
-            # NOTE(arjun): new stop tokens for compatibility with AgentPack
-            "\n# Code Before",
-            "\n# Code After",
-            "\n# Instruction",
-        ],
-    ):
-        super().__init__()
-        self.model_name = model_name
-        self.prompt_format = prompt_format
-        self.post_process = post_process
-        self.stop_tokens = stop_tokens
+            "## Explanation:"
+        ]
 
     async def generate(self, prompt: EditCommand, **kwargs) -> EditResponse:
         assert prompt["instruction"] is not None, "Not implemented yet"
-        str_prompt = self.prompt_format(prompt["content"], prompt["instruction"])
+        str_prompt = self.format_prompt(prompt["content"], prompt["instruction"], prompt["new"])
 
         kwargs = kwargs.copy()
         stop = kwargs.pop("stop", [])
@@ -237,21 +208,30 @@ class DirectEditModel(EditModel):
             prompt=str_prompt,
             **kwargs,
         )
-        generated_text = response.choices[0].text
+        return self.extract_from_response(response.choices[0].text)
 
-        # Process response
-        try:
-            return maybe_extract_markdown_codeblock(generated_text)
-        except Exception as e:
-            # print full stack trace
-            import traceback
 
-            traceback.print_exc()
-            print("Error in post processing:", e)
-            return generated_text
+class AgentPackEditModel(DirectEditModel):
 
-    def get_prompt_format(self):
-        return self.prompt_format
+    def __init__(self, model_name: str):
+        super().__init__(model_name)
+    
+    def format_prompt(
+        self,
+        old,
+        instr,
+        codeblock_before: Optional[str] = None,
+        codeblock_after: Optional[str] = None,
+    ):
+        return f"# Code Before\n\n```\n{old.rstrip()}\n```\n\n# Instruction\n\n{instr}\n\n# Code After\n\n```\n"
+    
+    def extract_from_response(self, response_text: str) -> str:
+        return response_text
+    
+    def get_stop_tokens(self):
+        return [
+            "```",
+        ]
 
 
 class ChatAdaptorEditModel(EditModel):
@@ -263,13 +243,9 @@ class ChatAdaptorEditModel(EditModel):
     def __init__(
         self,
         model_name,
-        prompt_format: MessagesFormatFunction = chat_edit_prompt_zeroshot,
-        post_process: PostProcessFunction = python_markdown_codeblock_extract,
     ):
         super().__init__()
         self.model_name = model_name
-        self.prompt_format = prompt_format
-        self.post_process = post_process
 
     async def generate(self, prompt: EditCommand, **kwargs) -> EditResponse:
         assert prompt["instruction"] is not None, (
@@ -277,11 +253,11 @@ class ChatAdaptorEditModel(EditModel):
         )
         response = await acompletion(
             model=self.model_name,
-            messages=self.prompt_format(prompt["content"], prompt["instruction"]),
+            messages=chat_edit_prompt_zeroshot(prompt["content"], prompt["instruction"]),
             **kwargs,
         )
         gen = response.choices[0].message.content
-        return self.post_process(prompt["content"], gen)
+        return extract_code_from_markdown(prompt["content"], gen)
 
 
 async def process_example_and_instruction(
@@ -351,8 +327,10 @@ async def main(args):
     dataset = datasets.load_dataset(args.dataset, args.subset, split=args.split)
 
     # Direct model instantiation based on model_type
-    if args.model_type == "direct":
+    if args.model_type == "editcoder":
         model = DirectEditModel(args.model)
+    elif args.model_type == "agentpack":
+        model = AgentPackEditModel(args.model)
     elif args.model_type == "chat":
         model = ChatAdaptorEditModel(args.model)
     else:
@@ -405,8 +383,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model-type",
         type=str,
-        default="direct",
-        choices=["direct", "chat", "chat_oneshot"],
+        required=True,
+        choices=["editcoder", "agentpack","chat", "chat_oneshot"],
         help="type of model to use for completions",
     )
     parser.add_argument(
