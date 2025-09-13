@@ -127,6 +127,19 @@ def extract_code_from_markdown(markdown):
     return code.strip()
 
 
+# Note that the code below is not fenced.
+ONE_SHOT_EXAMPLE = {
+    "before": """def add(a, b):
+    return a + b""",
+    "instruction": """Add a "sub" function that subtracts two numbers. Also write docstrings for both functions and change a,b to x,y.""",
+    "after": '''def add(x, y):
+    """Adds two numbers."""
+    return x + y
+
+def sub(x, y):
+    """Subtracts two numbers."""
+    return x - y'''
+}
 
 class EditModel:
     def __init__(self):
@@ -146,9 +159,10 @@ class DirectEditModel(EditModel):
     with non-chat models, like foundation models.
     """
 
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, one_shot: bool):
         super().__init__()
         self.model_name = model_name
+        self.one_shot = one_shot
 
     def format_prompt(
         self,
@@ -167,7 +181,10 @@ class DirectEditModel(EditModel):
         before = f"""## Code Before:\n{old}\n"""
         instr = f"""## Instruction:\n{instr}\n"""
         after = f"""## Code After:\n"""
-        return before + instr + after
+        prompt = before + instr + after
+        if self.one_shot:
+            prompt = f"## Code Before\n{ONE_SHOT_EXAMPLE['before']}\n## Instruction:\n{ONE_SHOT_EXAMPLE['instruction']}\n## Code After\n{ONE_SHOT_EXAMPLE['after']}\n{prompt}"
+        return prompt
 
     def extract_from_response(self, response_text: str) -> str:
         code = extract_code_from_markdown(response_text)
@@ -196,25 +213,22 @@ class DirectEditModel(EditModel):
 
     async def generate(self, prompt: EditCommand, **kwargs) -> EditResponse:
         assert prompt["instruction"] is not None, "Not implemented yet"
-        str_prompt = self.format_prompt(prompt["content"], prompt["instruction"], prompt["new"])
-
-        kwargs = kwargs.copy()
-        stop = kwargs.pop("stop", [])
-        kwargs["stop"] = stop + self.stop_tokens
+        str_prompt = self.format_prompt(prompt["content"], prompt["instruction"])
 
         # Generate using text_completion directly
         response = await atext_completion(
             model=self.model_name,
             prompt=str_prompt,
             **kwargs,
+            stop=self.get_stop_tokens(),
         )
         return self.extract_from_response(response.choices[0].text)
 
 
 class AgentPackEditModel(DirectEditModel):
 
-    def __init__(self, model_name: str):
-        super().__init__(model_name)
+    def __init__(self, model_name: str, one_shot: bool):
+        super().__init__(model_name, one_shot)
     
     def format_prompt(
         self,
@@ -223,7 +237,10 @@ class AgentPackEditModel(DirectEditModel):
         codeblock_before: Optional[str] = None,
         codeblock_after: Optional[str] = None,
     ):
-        return f"# Code Before\n\n```\n{old.rstrip()}\n```\n\n# Instruction\n\n{instr}\n\n# Code After\n\n```\n"
+        prompt = f"# Code Before:\n\n```\n{old.rstrip()}\n```\n\n# Instruction:\n\n{instr}\n\n# Code After:\n\n```\n"
+        if self.one_shot:
+            prompt = f"# Code Before:\n\n```\n{ONE_SHOT_EXAMPLE['before']}\n```\n\n# Instruction:\n\n{ONE_SHOT_EXAMPLE['instruction']}\n\n# Code After:\n\n```\n{ONE_SHOT_EXAMPLE['after']}\n```\n\n{prompt}"
+        return prompt
     
     def extract_from_response(self, response_text: str) -> str:
         return response_text
@@ -328,9 +345,13 @@ async def main(args):
 
     # Direct model instantiation based on model_type
     if args.model_type == "editcoder":
-        model = DirectEditModel(args.model)
+        model = DirectEditModel(args.model, False)
+    elif args.model_type == "editcoder-1shot":
+        model = DirectEditModel(args.model, True)
     elif args.model_type == "agentpack":
-        model = AgentPackEditModel(args.model)
+        model = AgentPackEditModel(args.model, False)
+    elif args.model_type == "agentpack-1shot":
+        model = AgentPackEditModel(args.model, True)
     elif args.model_type == "chat":
         model = ChatAdaptorEditModel(args.model)
     else:
@@ -384,7 +405,7 @@ if __name__ == "__main__":
         "--model-type",
         type=str,
         required=True,
-        choices=["editcoder", "agentpack","chat", "chat_oneshot"],
+        choices=["editcoder", "editcoder-1shot", "agentpack","agentpack-1shot","chat", "chat_oneshot"],
         help="type of model to use for completions",
     )
     parser.add_argument(
