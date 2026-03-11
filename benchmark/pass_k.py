@@ -108,6 +108,24 @@ def for_file(path):
     }
 
 
+def expand_k_range(start: int, stop: int, step: int) -> list[int]:
+    """
+    Expand a k range while always including the provided endpoints.
+
+    Examples:
+    - (1, 20, 5) -> [1, 5, 10, 15, 20]
+    - (3, 12, 4) -> [3, 4, 8, 12]
+    """
+    if step <= 0:
+        raise ValueError("k range step must be positive")
+    if start > stop:
+        raise ValueError("k range start must be less than or equal to stop")
+
+    values = {start, stop}
+    values.update(range(step, stop + 1, step))
+    return sorted(values)
+
+
 def resolve_k_values(k_list, k_range):
     """Resolve -k and --k-range into a sorted, deduplicated list of k values."""
     ks = set()
@@ -115,7 +133,7 @@ def resolve_k_values(k_list, k_range):
         ks.update(k_list)
     if k_range:
         start, stop, step = k_range
-        ks.update(range(start, stop + 1, step))
+        ks.update(expand_k_range(start, stop, step))
     return sorted(ks)
 
 
@@ -137,7 +155,10 @@ def main():
         "dirs", type=str, help="Directories with results.", nargs="+")
     args = parser.parse_args()
 
-    extra_ks = resolve_k_values(args.k, args.k_range)
+    try:
+        extra_ks = resolve_k_values(args.k, args.k_range)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if not args.suppress_header:
         print(
@@ -174,6 +195,7 @@ def main():
             mean_median_coverage = "NA"
 
         if temperature == 0.8:
+            printed_ks = {10, 100}
             pass_10 = np.round(np.mean([r["pass@10"]
                                for r in results]) * 100, 6)
             pass_100 = np.round(np.mean([r["pass@100"]
@@ -183,6 +205,7 @@ def main():
             print(
                 f"{name},100,{pass_100},{num_problems},{min_completions},{max_completions},{excess_code},{excess_code_se},{mean_median_coverage}")
         else:
+            printed_ks = {1}
             pass_1 = np.round(np.mean([r["pass@1"]
                               for r in results]) * 100, 6)
             print(
@@ -190,6 +213,8 @@ def main():
 
         # Print results for all extra k values
         for k in extra_ks:
+            if k in printed_ks:
+                continue
             pass_k = np.round(np.mean([estimator(r["n"], r["c"], k)
                                        for r in results]) * 100, 6)
             print(

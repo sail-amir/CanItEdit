@@ -46,8 +46,10 @@ For example, to retrieve the results from the previous step, you can run:
 ```
 
 You will be provided with a CSV-formatted table with the results, including `pass@1` and `ExcessCode` metrics.
-You can provide a `-k` parameter to the script to change the value of `k` for the `pass@k` metric.
+You can provide one or more `-k` values to print multiple `pass@k` rows, or use
+`--k-range START STOP STEP` to expand a batch of `k` values.
 
 ```
-python pass_k.py -k 5 ./outputs
+python pass_k.py -k 1 5 10 15 20 ./outputs
+python pass_k.py --k-range 1 20 5 ./outputs
 ```
