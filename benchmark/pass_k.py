@@ -240,10 +240,6 @@ def main():
         for result in results:
             grouped_results[result["instr_kind"]].append(result)
 
-        if len(grouped_results) == 1 and None in grouped_results:
-            print_metrics(display_name(name, None), grouped_results[None], extra_ks)
-            continue
-
         for instr_kind in ["instruction_lazy", "instruction_descriptive", None]:
             if instr_kind not in grouped_results:
                 continue
@@ -252,6 +248,9 @@ def main():
                 grouped_results[instr_kind],
                 extra_ks,
             )
+
+        if len(grouped_results) > 1 or None not in grouped_results:
+            print_metrics(display_name(name, None), results, extra_ks)
 
 
 if __name__ == "__main__":
