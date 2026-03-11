@@ -45,7 +45,9 @@ For example, to retrieve the results from the previous step, you can run:
 ./pass_k.py ./out
 ```
 
-You will be provided with a CSV-formatted table with the results, including `pass@1` and `ExcessCode` metrics.
+You will be provided with a CSV-formatted table with the results, including
+per-category rows for `lazy` and `descriptive`, along with `pass@1` and
+`ExcessCode` metrics.
 You can provide one or more `-k` values to print multiple `pass@k` rows, or use
 `--k-range START STOP STEP` to expand a batch of `k` values.
 
