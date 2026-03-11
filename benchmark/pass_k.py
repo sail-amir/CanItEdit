@@ -108,16 +108,37 @@ def for_file(path):
     }
 
 
+def resolve_k_values(k_list, k_range):
+    """Resolve -k and --k-range into a sorted, deduplicated list of k values."""
+    ks = set()
+    if k_list:
+        ks.update(k_list)
+    if k_range:
+        start, stop, step = k_range
+        ks.update(range(start, stop + 1, step))
+    return sorted(ks)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--suppress-header",
                         action="store_true", help="Suppress the header")
-    parser.add_argument("-k", type=int, default=None, help="The value of k")
+    parser.add_argument(
+        "-k", type=int, default=None, nargs="+",
+        help="One or more values of k (e.g. -k 1 5 10)"
+    )
+    parser.add_argument(
+        "--k-range", type=int, nargs=3, metavar=("START", "STOP", "STEP"),
+        help="Range of k values inclusive of STOP (e.g. --k-range 1 20 1)"
+    )
     parser.add_argument("--v1_only", action="store_true",
                         help="Only use v1 results")
     parser.add_argument(
-        "dirs", type=str,  help="Directories with results. ", nargs="+")
+        "dirs", type=str, help="Directories with results.", nargs="+")
     args = parser.parse_args()
+
+    extra_ks = resolve_k_values(args.k, args.k_range)
+
     if not args.suppress_header:
         print(
             "Name,Pass@k,Estimate,NumProblems,MinCompletions,MaxCompletions,ExcessCode,ExcessCodeSE,MeanMedianCoverage")
@@ -167,11 +188,12 @@ def main():
             print(
                 f"{name},1,{pass_1:.1f},{num_problems},{min_completions},{max_completions},{excess_code:.2f},{excess_code_se:.2f},{mean_median_coverage:.2f}")
 
-        if args.k is not None:
-            pass_k = np.round(np.mean([estimator(r["n"], r["c"], args.k)
+        # Print results for all extra k values
+        for k in extra_ks:
+            pass_k = np.round(np.mean([estimator(r["n"], r["c"], k)
                                        for r in results]) * 100, 6)
             print(
-                f"{name},{args.k},{pass_k},{num_problems},{min_completions},{max_completions},{excess_code},{excess_code_se},{mean_median_coverage}")
+                f"{name},{k},{pass_k},{num_problems},{min_completions},{max_completions},{excess_code},{excess_code_se},{mean_median_coverage}")
 
 
 if __name__ == "__main__":
